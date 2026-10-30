@@ -1,0 +1,21 @@
+{
+  "root": ".",
+  "database_path": "data/geofactory.sqlite3",
+  "output_dir": "output",
+  "bind_host": "127.0.0.1",
+  "dashboard_port": 8765,
+  "require_topic_approval": true,
+  "dry_run": true,
+  "publishing_enabled": false,
+  "ffmpeg": "ffmpeg",
+  "ffprobe": "ffprobe",
+  "tts_backend": "none",
+  "piper_executable": "piper",
+  "piper_voice_model": "",
+  "piper_voice_license": "",
+  "local_llm_url": "http://127.0.0.1:11434",
+  "local_llm_model": "",
+  "minimum_free_disk_gb": 2.0,
+  "width": 1920,
+  "height": 1080
+}

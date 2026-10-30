@@ -1,0 +1,3 @@
+# Core application uses only the Python standard library (Python >= 3.11).
+# Optional system tools: FFmpeg/FFprobe, Ollama, and Piper with a separately
+# verified voice-model licence. No paid APIs or Python packages are required.
