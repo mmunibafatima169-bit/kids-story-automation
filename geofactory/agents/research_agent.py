@@ -7,9 +7,11 @@ import re
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from geofactory.core.database import Database
+from geofactory.wikimedia import WikimediaError, request_json
 
 
 class ResearchError(ValueError):
@@ -21,6 +23,13 @@ def import_ledger(db: Database, job_id: str, ledger_path: Path) -> dict[str, int
         data = json.loads(ledger_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ResearchError(f"Could not read source ledger {ledger_path}: {exc}") from exc
+    return import_ledger_data(db, job_id, data)
+
+
+def import_ledger_data(
+    db: Database, job_id: str, data: dict[str, object]
+) -> dict[str, int]:
+    """Validate and persist already-parsed source and claim records."""
     if not isinstance(data, dict):
         raise ResearchError("Source ledger root must be a JSON object.")
     sources = data.get("sources", [])
@@ -35,7 +44,7 @@ def import_ledger(db: Database, job_id: str, ledger_path: Path) -> dict[str, int
             for source in sources:
                 if not isinstance(source, dict):
                     raise ResearchError("Every source record must be a JSON object.")
-                required = ("title", "url", "publisher", "evidence")
+                required = ("title", "url", "publisher", "evidence", "licence")
                 if any(
                     not isinstance(source.get(key), str) or not source[key].strip()
                     for key in required
@@ -44,6 +53,16 @@ def import_ledger(db: Database, job_id: str, ledger_path: Path) -> dict[str, int
                 parsed = urlparse(source["url"])
                 if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
                     raise ResearchError("Source URLs must be valid HTTPS URLs.")
+                licence_url = source.get("licence_url", "")
+                if licence_url:
+                    parsed_licence = urlparse(licence_url)
+                    if (
+                        parsed_licence.scheme != "https"
+                        or not parsed_licence.netloc
+                        or parsed_licence.username
+                        or parsed_licence.password
+                    ):
+                        raise ResearchError("Licence URLs must be valid HTTPS URLs.")
                 accessed_at = source.get("accessed_at") or datetime.now(timezone.utc).date().isoformat()
                 published_at = source.get("published_at", "")
                 if not isinstance(accessed_at, str) or not isinstance(published_at, str):
@@ -76,17 +95,19 @@ def import_ledger(db: Database, job_id: str, ledger_path: Path) -> dict[str, int
                 conn.execute(
                     """INSERT INTO sources
                        (id, job_id, title, url, publisher, accessed_at, published_at,
-                        evidence, notes)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        licence, licence_url, evidence, notes)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(id) DO UPDATE SET
                          title=excluded.title, url=excluded.url, publisher=excluded.publisher,
                          accessed_at=excluded.accessed_at, published_at=excluded.published_at,
+                         licence=excluded.licence, licence_url=excluded.licence_url,
                          evidence=excluded.evidence, notes=excluded.notes
                        WHERE sources.job_id=excluded.job_id""",
                     (
                         source_id, job_id, source["title"], source["url"],
                         source["publisher"],
-                        accessed_at, published_at, source["evidence"], str(source.get("notes", "")),
+                        accessed_at, published_at, source["licence"], licence_url,
+                        source["evidence"], str(source.get("notes", "")),
                     ),
                 )
                 inserted_sources += 1
@@ -144,6 +165,87 @@ def import_ledger(db: Database, job_id: str, ledger_path: Path) -> dict[str, int
             conn.execute("ROLLBACK")
             raise
     return {"sources": inserted_sources, "claims": inserted_claims}
+
+
+def discover_wikipedia_sources(
+    db: Database,
+    job_id: str,
+    query: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Search English Wikipedia and persist article excerpts with their actual text licence."""
+    query = query.strip()
+    if not query or len(query) > 250:
+        raise ResearchError("Wikipedia query must contain 1-250 characters.")
+    if not 1 <= limit <= 10:
+        raise ResearchError("Wikipedia result limit must be between 1 and 10.")
+    try:
+        response = request_json(
+            "wikipedia",
+            {
+                "action": "query",
+                "generator": "search",
+                "gsrsearch": query,
+                "gsrnamespace": 0,
+                "gsrlimit": limit,
+                "prop": "extracts|info",
+                "inprop": "url",
+                "explaintext": 1,
+                "exintro": 1,
+                "exchars": 2400,
+                "format": "json",
+                "formatversion": 2,
+            },
+        )
+    except WikimediaError as exc:
+        raise ResearchError(str(exc)) from exc
+    query_data = response.get("query")
+    pages = query_data.get("pages", []) if isinstance(query_data, dict) else []
+    if not isinstance(pages, list):
+        raise ResearchError("Wikipedia API returned an invalid page list.")
+    accessed_at = datetime.now(timezone.utc).date().isoformat()
+    sources: list[dict[str, Any]] = []
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        title, url, extract = page.get("title"), page.get("fullurl"), page.get("extract")
+        page_id = page.get("pageid")
+        if (
+            not isinstance(title, str)
+            or not isinstance(url, str)
+            or not isinstance(extract, str)
+            or not extract.strip()
+            or not isinstance(page_id, int)
+        ):
+            continue
+        parsed_url = urlparse(url)
+        if parsed_url.scheme != "https" or parsed_url.hostname != "en.wikipedia.org":
+            continue
+        sources.append(
+            {
+                "id": f"wiki-{page_id}-{job_id}",
+                "title": title,
+                "url": url,
+                "publisher": "English Wikipedia",
+                "accessed_at": accessed_at,
+                "published_at": "",
+                "licence": "CC BY-SA 4.0",
+                "licence_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+                "evidence": extract.strip(),
+                "notes": (
+                    "Lead extract returned by the public MediaWiki API. Treat as a research lead; "
+                    "verify material facts against the article's cited references and independent sources. "
+                    "Text attribution: Wikipedia contributors."
+                ),
+            }
+        )
+    if not sources:
+        raise ResearchError("Wikipedia returned no usable article extracts for this query.")
+    try:
+        import_ledger_data(db, job_id, {"sources": sources, "claims": []})
+    except ResearchError:
+        raise
+    return sources
 
 
 def export_ledger(db: Database, job_id: str, destination: Path) -> None:

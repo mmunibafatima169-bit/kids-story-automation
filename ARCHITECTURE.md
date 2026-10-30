@@ -12,9 +12,10 @@ CLI / loopback dashboard
           +-- core/jobs.py (idempotency, transitions, recovery, approval hash)
           |
           +-- agents/topic_agent.py (deterministic proposals/history scoring)
-          +-- agents/research_agent.py (owner-reviewed ledger import/export)
+          +-- agents/research_agent.py (Wikipedia API search, owner-reviewed ledger import/export)
           +-- agents/script_agent.py (source-aware notes; optional Ollama draft)
-          +-- media/asset_manager.py (local asset rights records/attribution)
+          +-- media/asset_manager.py (Commons API search/download, licence records/attribution)
+          +-- wikimedia.py (shared HTTPS API client, User-Agent, rate limit, bounded downloads)
           +-- media/tts_engine.py (optional Piper WAV + estimated SRT)
           +-- media/visual_builder.py (original labelled SVG charts)
           +-- media/video_editor.py (FFmpeg stills + narration assembly)
@@ -34,10 +35,10 @@ Output files are human-editable and stored under `output/<job-id>/`. Approval ha
 ## Workflow boundaries
 
 1. Topic proposals are local scoring seeds, saved for review; they make no factual availability claims.
-2. Research must be supplied through a ledger. Each fact requires source references and evidence text. The application does not scrape or authenticate the source's claims.
+2. Research leads can be discovered through the public English Wikipedia API. Source title, page URL, publisher, retrieval date, evidence excerpt, and CC BY-SA 4.0 text licence are recorded. API discovery is not fact verification; inspect the article's citations and use independent sources. Hand-imported sources must also state their licence. No general-purpose web scraping is performed.
 3. Script notes are evidence-aware. If Ollama and a model are explicitly configured, a local-only request drafts narration and validates word count and IDs. Model prose is not proof; a human must verify every claim.
 4. Narration uses Piper only with an existing voice path and a non-empty owner-recorded licence. The program cannot validate external voice-model terms.
-5. Assets are registered from local files, not searched/downloaded. License identifiers, creator, source URL, attribution, commercial-use flag, and file hash are recorded.
+5. Commons images can be searched and downloaded through the public Wikimedia Commons API. The client identifies itself, serializes requests at one per second, bounds responses/downloads, uses HTTPS, and only fetches from approved Wikimedia media hosts. Commons licence name/URL pairs are checked against the supported CC0, CC BY, CC BY-SA, and public-domain-mark forms; unknown, NC, ND, missing, or mismatched terms are rejected. Creator/title/source/publisher/retrieval time/licence/licence URL/attribution/hash are saved. The metadata is not a legal guarantee; the owner reviews item pages and terms. Manually supplied assets remain available separately.
 6. FFmpeg assembles rights-cleared stills and narration. It does not currently generate authoritative maps, motion graphics, transitions, or audio-aligned subtitles.
 7. QA blocks approval on missing render/audio/subtitles, out-of-range duration/resolution, unsupported claims, unknown asset rights, missing attribution, or incomplete package files. Automated QA cannot check every frame, fact, legal right, or platform policy.
 8. The dashboard exposes an exact-package approval action with a process-local anti-CSRF token. Approval requires fresh QA and is never inferred from a default or prior artifact.
@@ -54,6 +55,6 @@ Transient worker states are visible in SQLite. Recovery requeues interrupted loc
 - No `.env` parser exists; secrets are not needed by supported paths.
 - `config.json`, media, database, backups, credentials, and logs are ignored.
 - subprocesses use argument arrays, not a shell.
-- Rights/source URLs must be HTTPS. The app does not bypass website rules or automatically retrieve websites.
+- Rights/source URLs must be HTTPS. Only documented public Wikimedia APIs and media hosts are retrieved; no rate-limit or access restrictions are bypassed.
 - Approval is content-hash-bound; changed deliverables require renewed approval.
 - Never enable external access through a reverse proxy without a separate threat review.

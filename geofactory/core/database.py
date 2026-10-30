@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 class ClosingConnection(sqlite3.Connection):
@@ -84,6 +84,8 @@ class Database:
                             publisher TEXT NOT NULL,
                             accessed_at TEXT NOT NULL,
                             published_at TEXT NOT NULL DEFAULT '',
+                            licence TEXT NOT NULL DEFAULT 'Unknown',
+                            licence_url TEXT NOT NULL DEFAULT '',
                             evidence TEXT NOT NULL,
                             notes TEXT NOT NULL DEFAULT ''
                         );
@@ -98,10 +100,13 @@ class Database:
                         CREATE TABLE IF NOT EXISTS assets (
                             id TEXT PRIMARY KEY,
                             job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                            title TEXT NOT NULL DEFAULT '',
+                            publisher TEXT NOT NULL DEFAULT 'Owner-provided source',
                             path TEXT NOT NULL,
                             origin_url TEXT NOT NULL,
                             creator TEXT NOT NULL,
                             licence TEXT NOT NULL,
+                            licence_url TEXT NOT NULL DEFAULT '',
                             attribution TEXT NOT NULL,
                             commercial_use INTEGER NOT NULL,
                             file_sha256 TEXT NOT NULL,
@@ -136,10 +141,38 @@ class Database:
                             subscribers_gained INTEGER,
                             notes TEXT NOT NULL DEFAULT ''
                         );
-                        PRAGMA user_version = 1;
+                        PRAGMA user_version = 3;
                         COMMIT;
                         """
                     )
+                    version = SCHEMA_VERSION
+                except Exception:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
+            while version < SCHEMA_VERSION:
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    if version == 1:
+                        conn.execute(
+                            "ALTER TABLE sources ADD COLUMN licence TEXT NOT NULL DEFAULT 'Unknown'"
+                        )
+                        conn.execute(
+                            "ALTER TABLE sources ADD COLUMN licence_url TEXT NOT NULL DEFAULT ''"
+                        )
+                    elif version == 2:
+                        conn.execute(
+                            "ALTER TABLE assets ADD COLUMN title TEXT NOT NULL DEFAULT ''"
+                        )
+                        conn.execute(
+                            "ALTER TABLE assets ADD COLUMN publisher TEXT NOT NULL DEFAULT 'Owner-provided source'"
+                        )
+                        conn.execute(
+                            "ALTER TABLE assets ADD COLUMN licence_url TEXT NOT NULL DEFAULT ''"
+                        )
+                    version += 1
+                    conn.execute(f"PRAGMA user_version = {version}")
+                    conn.execute("COMMIT")
                 except Exception:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")

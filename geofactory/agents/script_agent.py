@@ -18,6 +18,10 @@ def write_script_preview(db: Database, job_id: str, destination: Path, demo: boo
             "SELECT id, text, kind, source_ids_json, uncertainty FROM claims WHERE job_id = ?",
             (job_id,),
         ).fetchall()
+        sources = conn.execute(
+            "SELECT id, title, url, publisher FROM sources WHERE job_id = ? ORDER BY id",
+            (job_id,),
+        ).fetchall()
     if job is None:
         raise KeyError(f"Unknown job {job_id}")
     lines = [
@@ -45,14 +49,29 @@ def write_script_preview(db: Database, job_id: str, destination: Path, demo: boo
                 "",
             ]
         )
-    elif not claims:
+    elif not claims and not sources:
         lines.extend(
             [
-                "> No evidence has been entered. This draft intentionally contains no factual narration.",
+                "> No research sources have been entered. This draft intentionally contains no factual narration.",
                 "> Research and source review are required before scriptwriting can proceed.",
                 "",
             ]
         )
+    elif not claims:
+        lines.extend(
+            [
+                "> Research leads were retrieved, but no claims have been verified or approved for narration.",
+                "> Do not treat source discovery as fact-checking; review source references before drafting.",
+                "",
+                "### Retrieved research references",
+                "",
+            ]
+        )
+        lines.extend(
+            f"- [{source['id']}] {source['title']} — {source['publisher']} ({source['url']})"
+            for source in sources
+        )
+        lines.append("")
     else:
         for claim in claims:
             refs = ", ".join(json.loads(claim["source_ids_json"])) or "no source (non-factual)"

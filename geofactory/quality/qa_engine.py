@@ -111,8 +111,13 @@ def run_qa(db: Database, job_id: str, config: FactoryConfig) -> dict[str, Any]:
         if set(source_records) != known_source_ids or set(claim_records) != {row["id"] for row in claims}:
             checks.append(_check("critical", "source_ledger_mismatch", "Source/claim ledger does not match persisted research records."))
         for source in sources:
+            if not str(source["licence"]).strip() or source["licence"].casefold() == "unknown":
+                checks.append(_check("critical", "source_licence_missing", f"Source {source['id']} has no verified licence record."))
             record = source_records.get(source["id"], {})
-            if any(record.get(field) != source[field] for field in ("title", "url", "publisher", "evidence")):
+            if any(
+                record.get(field) != source[field]
+                for field in ("title", "url", "publisher", "licence", "licence_url", "evidence")
+            ):
                 checks.append(_check("critical", "source_ledger_mismatch", f"Source {source['id']} differs from its persisted record."))
         for claim in claims:
             record = claim_records.get(claim["id"], {})
@@ -158,6 +163,10 @@ def run_qa(db: Database, job_id: str, config: FactoryConfig) -> dict[str, Any]:
             asset["licence"] not in ALLOWED_LICENSES
             or not asset["commercial_use"]
             or not asset["attribution"].strip()
+            or not asset["title"].strip()
+            or not asset["publisher"].strip()
+            or not asset["creator"].strip()
+            or not asset["retrieved_at"].strip()
         ):
             checks.append(_check("critical", "asset_rights_invalid", f"Asset {asset['id']} does not have approved rights."))
         elif not path.is_file() or sha256_file(path) != asset["file_sha256"]:
@@ -165,7 +174,10 @@ def run_qa(db: Database, job_id: str, config: FactoryConfig) -> dict[str, Any]:
         record = asset_records.get(asset["id"], {})
         if (
             record.get("file_sha256") != asset["file_sha256"]
+            or record.get("title") != asset["title"]
+            or record.get("publisher") != asset["publisher"]
             or record.get("licence") != asset["licence"]
+            or record.get("licence_url") != asset["licence_url"]
             or record.get("attribution") != asset["attribution"]
         ):
             checks.append(_check("critical", "asset_ledger_mismatch", f"Asset ledger entry {asset['id']} differs from its persisted record."))

@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from geofactory.agents.research_agent import export_ledger, import_ledger
+from geofactory.agents.research_agent import (
+    discover_wikipedia_sources, export_ledger, import_ledger,
+)
 from geofactory.agents.script_agent import write_script_preview
 from geofactory.agents.topic_agent import propose_topics
 from geofactory.analytics.feedback import import_csv, report as analytics_report
@@ -23,7 +25,8 @@ from geofactory.core.jobs import (
     record_approval, transition_job,
 )
 from geofactory.media.asset_manager import (
-    export_asset_ledger, register_asset, write_attribution_report,
+    export_asset_ledger, register_asset, search_and_download_commons,
+    write_attribution_report,
 )
 from geofactory.media.tts_engine import synthesize, write_estimated_srt
 from geofactory.media.video_editor import RenderError, render_video
@@ -53,6 +56,33 @@ def build_parser() -> argparse.ArgumentParser:
     research = sub.add_parser("research", help="Import a human-prepared source and claim ledger")
     research.add_argument("job_id")
     research.add_argument("--ledger", type=Path, required=True)
+
+    online_research = sub.add_parser(
+        "research-online", help="Search English Wikipedia and record licensed source leads"
+    )
+    online_research.add_argument("job_id")
+    online_research.add_argument("--query", required=True)
+    online_research.add_argument("--limit", type=int, default=5)
+
+    commons = sub.add_parser(
+        "commons-search", help="Find, licence-check, and download Wikimedia Commons images"
+    )
+    commons.add_argument("job_id")
+    commons.add_argument("--query", required=True)
+    commons.add_argument("--limit", type=int, default=8)
+    commons.add_argument("--downloads", type=int, default=3)
+
+    online_demo = sub.add_parser(
+        "demo-online", help="Build a real Wikipedia/Commons research package; no publish/render claim"
+    )
+    online_demo.add_argument("--topic", default="Venice and its lagoon")
+    online_demo.add_argument(
+        "--question", default="How has the setting of Venice shaped its relationship with the sea?"
+    )
+    online_demo.add_argument("--research-query", default="Venice lagoon geography")
+    online_demo.add_argument("--visual-query", default="Venice lagoon aerial")
+    online_demo.add_argument("--limit", type=int, default=5)
+    online_demo.add_argument("--downloads", type=int, default=2)
 
     script = sub.add_parser("script", help="Write an evidence-aware script preview")
     script.add_argument("job_id")
@@ -239,6 +269,86 @@ def run(args: argparse.Namespace) -> int:
         counts = import_ledger(db, args.job_id, args.ledger)
         export_ledger(db, args.job_id, Path(job["output_dir"]) / "source_ledger.json")
         print(json.dumps(counts, indent=2))
+    elif args.command == "research-online":
+        job = get_job(db, args.job_id)
+        sources = discover_wikipedia_sources(
+            db, args.job_id, args.query, limit=args.limit
+        )
+        package = Path(job["output_dir"])
+        export_ledger(db, args.job_id, package / "source_ledger.json")
+        write_script_preview(db, args.job_id, package / "script.md")
+        print(
+            json.dumps(
+                {
+                    "sources_added": len(sources),
+                    "sources": [
+                        {
+                            "id": source["id"],
+                            "title": source["title"],
+                            "url": source["url"],
+                            "publisher": source["publisher"],
+                            "accessed_at": source["accessed_at"],
+                            "licence": source["licence"],
+                            "licence_url": source["licence_url"],
+                        }
+                        for source in sources
+                    ],
+                    "notice": "Research leads only. Verify against cited and independent sources.",
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    elif args.command == "commons-search":
+        job = get_job(db, args.job_id)
+        package = Path(job["output_dir"])
+        result = search_and_download_commons(
+            db, args.job_id, args.query, package / "assets",
+            limit=args.limit, max_downloads=args.downloads,
+        )
+        assets = export_asset_ledger(db, args.job_id, package / "asset_ledger.json")
+        write_attribution_report(assets, package / "attribution.md")
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    elif args.command == "demo-online":
+        if not 1 <= args.limit <= 10 or not 1 <= args.downloads <= 5:
+            raise ValueError("Online demo limits must be 1-10 sources and 1-5 asset downloads.")
+        job = _create_or_get_job(db, config, args.topic, args.question)
+        if job["status"] == "proposed":
+            process_offline_job(db, config, job["id"])
+        job = get_job(db, job["id"])
+        package = Path(job["output_dir"])
+        sources = discover_wikipedia_sources(
+            db, job["id"], args.research_query, limit=args.limit
+        )
+        export_ledger(db, job["id"], package / "source_ledger.json")
+        write_script_preview(db, job["id"], package / "script.md")
+        asset_result = search_and_download_commons(
+            db, job["id"], args.visual_query, package / "assets",
+            limit=max(args.limit, args.downloads), max_downloads=args.downloads,
+        )
+        assets = export_asset_ledger(db, job["id"], package / "asset_ledger.json")
+        write_attribution_report(assets, package / "attribution.md")
+        qa_report = run_qa(db, job["id"], config)
+        print(
+            json.dumps(
+                {
+                    "job_id": job["id"],
+                    "package_dir": str(package),
+                    "sources_added": len(sources),
+                    "assets_downloaded_or_reused": len(asset_result["assets"]),
+                    "assets_rejected": asset_result["rejected"],
+                    "qa_blocked": qa_report["approval_blocked"],
+                    "critical_failures": qa_report["critical_failures"],
+                    "status": get_job(db, job["id"])["status"],
+                    "notice": (
+                        "Real source and asset discovery completed. This is not a finished video: "
+                        "narration and final render still require production and human review."
+                    ),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
     elif args.command == "script":
         job = get_job(db, args.job_id)
         if config.local_llm_model:

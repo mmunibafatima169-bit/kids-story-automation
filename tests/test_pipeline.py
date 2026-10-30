@@ -67,6 +67,7 @@ class PipelineTests(unittest.TestCase):
                 "id": "test-source", "title": "Synthetic fixture",
                 "url": "https://example.invalid/synthetic-fixture",
                 "publisher": "Synthetic test fixture — not a real publisher",
+                "licence": "Synthetic fixture only; not a legal licence",
                 "evidence": "Synthetic-only test datum: sample value is 7.",
             }],
             "claims": [{
@@ -114,6 +115,7 @@ class PipelineTests(unittest.TestCase):
                 "id": "src-1", "title": "Synthetic source",
                 "url": "https://example.invalid/synthetic-source",
                 "publisher": "Synthetic test fixture",
+                "licence": "Synthetic fixture only; not a legal licence",
                 "evidence": "Synthetic fact for a unit test only.",
             }],
             "claims": [{

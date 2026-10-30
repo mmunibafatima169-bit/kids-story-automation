@@ -2,7 +2,7 @@
 
 This repository now contains a Python command-line and local review workflow for preparing evidence-led geography documentary packages. It uses SQLite and the Python standard library, does not need API keys for its offline demo, defaults to loopback-only review, and never enables public publishing. The original `main.py` / `story_generator.py` starter files are preserved as-is and are not part of this workflow.
 
-**Important current boundary:** the offline demo creates a clearly labelled draft package, not a finished documentary. It intentionally has no real-world claims, narration, rights-cleared visuals, or rendered video; QA blocks approval. Source-ledger import, optional Ollama script drafting, Piper narration, manual rights registration, FFmpeg assembly, technical QA, and hash-bound human approval are available as separate steps when configured. Source discovery/downloads, full editorial verification, current YouTube OAuth upload, automatic scheduling, and causal analytics are not implemented. Do not treat generated material or a passing automated check as editorial/legal review.
+**Important current boundary:** the offline demo creates a clearly labelled draft package, not a finished documentary. The optional online demo discovers Wikipedia sources and Commons images, but does not assert verified facts, narration, or a rendered video; QA blocks approval. Full editorial verification, current YouTube OAuth upload, automatic scheduling, and causal analytics are not implemented. Do not treat generated material or a passing automated check as editorial/legal review.
 
 ## Requirements and quick start
 
@@ -44,16 +44,25 @@ For Windows PowerShell, run `.\setup.ps1`, then use `python -m geofactory ...` i
 
    The `demo` command prepares a review scaffold for that idempotent job. It is not a research claim or a completed documentary.
 
-2. Prepare a ledger based on research you actually reviewed, then import it:
+2. Discover source leads from the public English Wikipedia API, then review them:
 
    ```bash
+   python3 -m geofactory research-online JOB_ID --query "Venice lagoon geography" --limit 5
    python3 -m geofactory research JOB_ID --ledger path/to/source_ledger.json
    python3 -m geofactory script JOB_ID
    ```
 
-   Each factual claim must cite a source ID. Source URLs must be HTTPS. Imported source text and citations are not independently authenticated; retain original records and check them. With a local Ollama model configured, `script` requests a 1,200–1,800-word evidence-conditioned draft and validates claim IDs/word count. Model output still requires line-by-line human fact-checking. Without it, `script` writes evidence-linked notes, not finished narration.
+   `research-online` records exact API article titles, URLs, publisher, access date, text licence, and licence URL. It saves a short article lead as a research lead, not a verified claim; check article citations and use independent sources. Source URLs must be HTTPS. Each factual claim added to a hand-reviewed ledger needs a source ID and a stated licence. With a local Ollama model configured, `script` requests a 1,200–1,800-word evidence-conditioned draft and validates claim IDs/word count. Model output still requires line-by-line human fact-checking. Without it, `script` writes evidence-aware notes, not finished narration.
 
-3. Edit the narration and metadata. Optional local Piper narration requires a separately installed Piper executable, a voice model whose licence/distribution terms you personally verified, and its licence recorded in `config.json`. Do not use a real person's voice without authorization. Add rights-cleared local image assets one at a time:
+3. Search and download suitably licensed Wikimedia Commons images:
+
+   ```bash
+   python3 -m geofactory commons-search JOB_ID --query "Venice lagoon aerial" --downloads 2
+   ```
+
+   Wikimedia requests are rate-limited to no faster than one per second. Downloads are limited to Wikimedia's media host, HTTPS, 25 MiB, and checked image file signatures. Commons licence metadata must explicitly permit commercial reuse (`CC0`, `CC BY`, `CC BY-SA`, or a recognized public-domain mark) and must agree with the official licence URL. Unknown, non-commercial, no-derivatives, missing, or mismatched licence metadata is rejected. Creator/title/attribution, source page, publisher, retrieval time, licence, licence URL, and SHA-256 are stored. This validates the Commons metadata, not the underlying legal accuracy; inspect the item page and the applicable licence yourself.
+
+   Alternatively, register a local image only after personally checking its rights:
 
    ```bash
    python3 -m geofactory narrate JOB_ID --text-file path/to/reviewed_narration.txt
@@ -63,7 +72,7 @@ For Windows PowerShell, run `.\setup.ps1`, then use `python -m geofactory ...` i
      --commercial-use
    ```
 
-   `asset-add` only registers an existing image; it does not download assets or independently verify licence assertions. It rejects unknown licences, non-commercial assets, missing attribution, symlinks, and mismatched image signatures. Confirm that the actual source page grants the stated rights and that attribution is accurate. Accepted identifiers are `CC0-1.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, and `Public Domain`; compatibility and legal interpretation still need human review.
+   `asset-add` only registers an existing image and does not independently verify manual licence assertions. Accepted identifiers include `CC0-1.0`, `CC-BY-2.0/3.0/4.0`, `CC-BY-SA-2.0/3.0/4.0`, and `Public Domain`. Compatibility and legal interpretation still require human review.
 
 4. Install FFmpeg and FFprobe from a trusted package source, then render and review:
 
@@ -87,7 +96,17 @@ For Windows PowerShell, run `.\setup.ps1`, then use `python -m geofactory ...` i
 
 `config.example.json` is the validated template. `config.json` is local and ignored by Git. Paths resolve from its configured root. Publishing must remain disabled; attempts to enable it are rejected. The dashboard refuses non-loopback binds. The optional Ollama URL is also restricted to loopback, and `local_llm_model` must be explicitly configured. The model endpoint is never called unless the script command is configured for it.
 
-Current machine assessment: Ubuntu 24.04, Python 3.14.2, x86_64, approximately 7.8 GiB RAM (about 1.7 GiB available at inspection), 18 GiB free disk, no detected NVIDIA GPU, and no FFmpeg, FFprobe, or Ollama. Consequently a full local model or video render was not available for verification. No voice model was installed or licence-reviewed. Prefer a small quantized local model only after checking memory and model terms; no model is downloaded automatically and no throughput/quality guarantee is made.
+Current machine assessment: Ubuntu 24.04, Python 3.14.2, x86_64, approximately 7.8 GiB RAM (roughly 1.1–1.3 GiB available during this phase), no swap, 15+ GiB free disk, and no detected NVIDIA GPU. FFmpeg 6.1.1 and FFprobe are installed. Ollama 0.40.13 is installed and `qwen2.5:0.5b` (397 MB) is downloaded; the ignored local `config.json` selects that configurable model name. **Model inference has not been run**: free memory is tight, CPU-only, and without swap. Do not expect dependable long-script generation or production throughput on this host. No voice model was installed or licence-reviewed. No model is downloaded automatically on other hosts.
+
+Ollama's systemd service is not running in this container. The API server was stopped after the model pull; if you deliberately want to test inference, start `ollama serve` in a separate terminal first. To keep the safe non-LLM script fallback, set `local_llm_model` to an empty string in `config.json`. A tiny model download succeeding does not prove that long-context generation will fit in available RAM.
+
+To build a real-source research package scaffold (still blocked until reviewed narration and a video render are supplied):
+
+```bash
+python3 -m geofactory demo-online
+```
+
+This live command searches Wikipedia and Commons, records returned metadata, downloads compatible Commons images, exports attribution, and reruns QA. It does not create a finished documentary, fabricate claims, synthesize narration, or bypass human review.
 
 No secrets are needed by the current application. `.env.example` is documentation only; the application does not load `.env`. The starter repository had a tracked `.env`; it was removed from the current Git index while preserving the local file. Older Git commits may still contain its contents, so rotate any credential that may have appeared there and consider repository-history remediation separately.
 
